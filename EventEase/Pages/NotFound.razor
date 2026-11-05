@@ -1,0 +1,47 @@
+﻿@page "/not-found"
+@layout MainLayout
+@implements IDisposable
+
+<PageTitle>Not found · EventEase</PageTitle>
+
+<h1>Page not found</h1>
+<p>
+    Sorry, we couldn't find
+    @if (!string.IsNullOrEmpty(requestedPath))
+    {
+        <code>/@requestedPath</code>
+    }
+    else
+    {
+        <span>the page you were looking for</span>
+    }.
+    It may have been removed, or the link may be wrong.
+</p>
+
+<div class="d-flex gap-2">
+    <a class="btn btn-primary" href="@AppRoutes.Events">Browse events</a>
+    <a class="btn btn-outline-secondary" href="@AppRoutes.Home">Go home</a>
+</div>
+
+
+@code {
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
+
+    // The URL is preserved when the Router shows this page, so we can tell the user what failed.
+    // Computed on every render (not cached in OnParametersSet): the Router reuses this component
+    // instance for consecutive not-found URLs, so a cached value showed the *first* bad path.
+    private string requestedPath
+    {
+        get
+        {
+            var path = Navigation.ToBaseRelativePath(Navigation.Uri).Split('?', '#')[0];
+            return path == "not-found" ? string.Empty : Uri.UnescapeDataString(path);
+        }
+    }
+
+    protected override void OnInitialized() => Navigation.LocationChanged += OnLocationChanged;
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e) => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
+}

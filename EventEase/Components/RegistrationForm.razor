@@ -1,0 +1,198 @@
+@* Registration form for one event, with validation:
+   - data annotations on each field, shown inline and in a summary after a failed submit
+   - service-side rules (seats left, duplicates, past event) shown on the relevant field
+   - unexpected errors are caught and shown as a message instead of crashing the page *@
+
+<EditForm EditContext="editContext" OnSubmit="SubmitAsync" FormName="@($"register-{Event.Id}")" novalidate>
+    <DataAnnotationsValidator />
+
+    @if (showSummary && editContext.GetValidationMessages().Any())
+    {
+        <div class="alert alert-danger py-2" role="alert" aria-live="assertive">
+            <strong>Please fix the following:</strong>
+            <ValidationSummary class="mb-0 mt-1" />
+        </div>
+    }
+
+    @if (generalError is not null)
+    {
+        <div class="alert alert-danger" role="alert">@generalError</div>
+    }
+
+    <fieldset disabled="@isSubmitting">
+        <div class="row g-3">
+            <div class="col-sm-6">
+                <label class="form-label" for="fullName">Full name <span class="text-danger" aria-hidden="true">*</span></label>
+                <InputText id="fullName" class="form-control" maxlength="60" autocomplete="name"
+                           @bind-Value="model.FullName" aria-required="true" />
+                <ValidationMessage For="() => model.FullName" />
+            </div>
+
+            <div class="col-sm-6">
+                <label class="form-label" for="email">Email <span class="text-danger" aria-hidden="true">*</span></label>
+                <InputText id="email" type="email" class="form-control" maxlength="254" autocomplete="email"
+                           @bind-Value="model.Email" aria-required="true" />
+                <ValidationMessage For="() => model.Email" />
+            </div>
+
+            <div class="col-sm-6">
+                <label class="form-label" for="phone">Phone <span class="text-body-secondary small">(optional)</span></label>
+                <InputText id="phone" type="tel" class="form-control" maxlength="20" autocomplete="tel"
+                           @bind-Value="model.Phone" />
+                <ValidationMessage For="() => model.Phone" />
+            </div>
+
+            <div class="col-sm-6">
+                <label class="form-label" for="tickets">Tickets (max @MaxTickets)</label>
+                <InputNumber id="tickets" class="form-control" style="max-width: 8rem"
+                             min="1" max="@MaxTickets"
+                             ParsingErrorMessage="Tickets must be a whole number."
+                             @bind-Value="model.Tickets" />
+                <ValidationMessage For="() => model.Tickets" />
+            </div>
+
+            <div class="col-12">
+                <div class="form-check">
+                    <InputCheckbox id="acceptTerms" class="form-check-input" @bind-Value="model.AcceptTerms" />
+                    <label class="form-check-label" for="acceptTerms">
+                        I agree to the event terms and to EventEase contacting me about this event.
+                    </label>
+                </div>
+                <ValidationMessage For="() => model.AcceptTerms" />
+
+                <div class="form-check mt-2">
+                    <InputCheckbox id="rememberMe" class="form-check-input" @bind-Value="model.RememberMe" />
+                    <label class="form-check-label" for="rememberMe">Keep me signed in on this device</label>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-4 d-flex gap-2 align-items-center">
+            <button type="submit" class="btn btn-primary">
+                @if (isSubmitting)
+                {
+                    <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                    <span>Registering…</span>
+                }
+                else
+                {
+                    <span>Confirm registration</span>
+                }
+            </button>
+            @ChildContent
+        </div>
+    </fieldset>
+</EditForm>
+
+@code {
+    [Parameter, EditorRequired] public Event Event { get; set; } = default!;
+
+    /// <summary>Raised with the stored record after a successful registration.</summary>
+    [Parameter] public EventCallback<RegistrationRecord> OnRegistered { get; set; }
+
+    /// <summary>Prefill name and email from the signed-in user (default true).</summary>
+    [Parameter] public bool PrefillFromSession { get; set; } = true;
+
+    /// <summary>Extra buttons or links placed next to the submit button.</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    [Inject] private AttendanceService Attendance { get; set; } = default!;
+    [Inject] private UserSessionState Session { get; set; } = default!;
+    [Inject] private ILogger<RegistrationForm> Logger { get; set; } = default!;
+
+    private Registration model = new();
+    private EditContext editContext = new(new Registration());
+    private ValidationMessageStore? serviceErrors;
+    private bool isSubmitting;
+    private bool showSummary;
+    private string? generalError;
+    private int? currentEventId;
+
+    private int MaxTickets => Math.Clamp(Event.SeatsLeft, 1, Registration.MaxTicketsPerRegistration);
+
+    protected override void OnParametersSet()
+    {
+        // Only reset the form when a different event is shown (not on every parent render).
+        if (currentEventId == Event.Id) return;
+        currentEventId = Event.Id;
+
+        model = new Registration { EventId = Event.Id };
+        if (PrefillFromSession && Session.IsSignedIn)
+        {
+            model.FullName = Session.FullName!;
+            model.Email = Session.Email!;
+            model.RememberMe = Session.IsPersistent;
+        }
+
+        editContext = new EditContext(model);
+        serviceErrors = new ValidationMessageStore(editContext);
+        // Once the user edits a field, clear the service-side errors.
+        editContext.OnFieldChanged += (_, _) =>
+        {
+            serviceErrors.Clear();
+            generalError = null;
+        };
+        showSummary = false;
+        generalError = null;
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (isSubmitting) return; // ignore double submits
+        serviceErrors?.Clear();
+        generalError = null;
+
+        model.Normalize();
+        if (!editContext.Validate())
+        {
+            showSummary = true;
+            return;
+        }
+
+        isSubmitting = true;
+        try
+        {
+            var outcome = await Attendance.RegisterAsync(model);
+            if (!outcome.Succeeded)
+            {
+                ShowServiceError(outcome);
+                return;
+            }
+
+            await Session.SignInAsync(model.FullName, model.Email, model.RememberMe);
+            await OnRegistered.InvokeAsync(outcome.Record);
+        }
+        catch (Exception ex)
+        {
+            // Never let an unexpected error crash the page; log it and tell the user what to do.
+            Logger.LogError(ex, "Registration for event {EventId} failed.", Event.Id);
+            generalError = "Something went wrong while saving your registration. Please try again.";
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private void ShowServiceError(RegistrationOutcome outcome)
+    {
+        var fieldName = outcome.Status switch
+        {
+            RegistrationStatus.NotEnoughSeats => nameof(Registration.Tickets),
+            RegistrationStatus.AlreadyRegistered => nameof(Registration.Email),
+            RegistrationStatus.InvalidRegistration => nameof(Registration.FullName),
+            _ => null
+        };
+
+        if (fieldName is null)
+        {
+            generalError = outcome.Message; // e.g. event in the past or removed
+        }
+        else
+        {
+            serviceErrors?.Add(editContext.Field(fieldName), outcome.Message);
+            editContext.NotifyValidationStateChanged();
+            showSummary = true;
+        }
+    }
+}

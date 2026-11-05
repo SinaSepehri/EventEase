@@ -1,0 +1,17 @@
+@* Shows a registration's status as a coloured badge. *@
+@if (Record.IsCancelled)
+{
+    <span class="badge text-bg-secondary">Cancelled</span>
+}
+else if (Record.IsCheckedIn)
+{
+    <span class="badge text-bg-success" title="@($"Checked in {Record.CheckedInAt!.Value.ToLocalTime():MMM d, h:mm tt}")">Checked in</span>
+}
+else
+{
+    <span class="badge text-bg-primary">Registered</span>
+}
+
+@code {
+    [Parameter, EditorRequired] public RegistrationRecord Record { get; set; } = default!;
+}

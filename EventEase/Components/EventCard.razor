@@ -1,0 +1,202 @@
+@* Reusable card that displays an event and supports two-way binding:
+   <EventCard @bind-Event="myEvent" />
+   Edits are made on a validated draft copy and only pushed to the parent on Save. *@
+
+@if (Event is null)
+{
+    @* Guard: a missing event used to throw NullReferenceException and crash the whole app. *@
+    <article class="card event-card h-100 border-warning" role="alert">
+        <div class="card-body text-body-secondary">Event details are unavailable.</div>
+    </article>
+}
+else
+{
+    <article class="card event-card h-100 shadow-sm">
+        <div class="card-body d-flex flex-column">
+            @if (!isEditing)
+            {
+                <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                    <h5 class="card-title mb-0">@Event.Name</h5>
+                    <span class="badge @CategoryBadgeClass">@Event.Category</span>
+                </div>
+
+                <ul class="list-unstyled small text-body-secondary mb-3">
+                    <li>
+                        <span class="me-1" aria-hidden="true">📅</span>
+                        <time datetime="@Event.Date.ToString("s")">@Event.Date.ToString("ddd, MMM d, yyyy · h:mm tt")</time>
+                    </li>
+                    <li><span class="me-1" aria-hidden="true">📍</span>@Event.Location</li>
+                    <li>
+                        <span class="me-1" aria-hidden="true">🎟️</span>
+                        @if (Event.IsFull)
+                        {
+                            <span class="text-danger fw-semibold">Sold out</span>
+                        }
+                        else
+                        {
+                            <span>@Event.SeatsLeft of @Event.Capacity seats left</span>
+                        }
+                    </li>
+                </ul>
+
+                @if (ShowDescription && !string.IsNullOrWhiteSpace(Event.Description))
+                {
+                    <p class="card-text">@Event.Description</p>
+                }
+
+                <div class="mt-auto d-flex flex-wrap gap-2">
+                    @if (ShowDetailsLink)
+                    {
+                        <a class="btn btn-sm btn-outline-primary" href="@AppRoutes.EventDetails(Event.Id)">Details</a>
+                    }
+                    @if (!Event.IsFull && !Event.IsPast)
+                    {
+                        <a class="btn btn-sm btn-primary" href="@AppRoutes.Register(Event.Id)">Register</a>
+                    }
+                    @if (AllowEdit)
+                    {
+                        <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" @onclick="BeginEdit">Edit</button>
+                    }
+                </div>
+            }
+            else if (draft is not null && editContext is not null)
+            {
+                <EditForm EditContext="editContext" OnSubmit="SaveAsync" FormName="@($"edit-event-{Event.Id}")">
+                    <DataAnnotationsValidator />
+
+                    <div class="mb-2">
+                        <label class="form-label small" for="@($"name-{Event.Id}")">Event name</label>
+                        @* Updates on every keystroke AND validates the field as you type *@
+                        <InputTextOnInput id="@($"name-{Event.Id}")" class="form-control form-control-sm"
+                                          maxlength="80" @bind-Value="draft.Name" />
+                        <ValidationMessage For="() => draft.Name" />
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="form-label small" for="@($"date-{Event.Id}")">Date &amp; time</label>
+                        <InputDate id="@($"date-{Event.Id}")" Type="InputDateType.DateTimeLocal"
+                                   class="form-control form-control-sm"
+                                   min="@DateTime.Today.ToString("yyyy-MM-ddT00:00")"
+                                   ParsingErrorMessage="Please enter a valid date and time."
+                                   @bind-Value="draft.Date" />
+                        <ValidationMessage For="() => draft.Date" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small" for="@($"location-{Event.Id}")">Location</label>
+                        <InputTextOnInput id="@($"location-{Event.Id}")" class="form-control form-control-sm"
+                                          maxlength="120" @bind-Value="draft.Location" />
+                        <ValidationMessage For="() => draft.Location" />
+                    </div>
+
+                    <p class="small text-body-secondary mb-2">
+                        Preview: <strong>@draft.Name</strong> · @draft.Date.ToString("MMM d, yyyy h:mm tt") · @draft.Location
+                    </p>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-sm btn-success" disabled="@(!CanSave)">Save</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="CancelEdit">Cancel</button>
+                    </div>
+                </EditForm>
+            }
+        </div>
+    </article>
+}
+
+@code {
+    /// <summary>The event to display. Use with @bind-Event for two-way binding.</summary>
+    [Parameter, EditorRequired] public Event? Event { get; set; }
+
+    /// <summary>Raised with a validated copy when the user saves; together with Event this enables @bind-Event.</summary>
+    [Parameter] public EventCallback<Event> EventChanged { get; set; }
+
+    [Parameter] public bool ShowDetailsLink { get; set; } = true;
+    [Parameter] public bool ShowDescription { get; set; }
+    [Parameter] public bool AllowEdit { get; set; } = true;
+
+    private bool isEditing;
+    private Event? draft;
+    private EditContext? editContext;
+
+    // --- Render optimization -------------------------------------------------------------
+    // Blazor re-renders a child every time its parent renders if it has a complex parameter
+    // (it can't tell if a mutable object changed). With thousands of cards, every keystroke
+    // in the search box re-rendered every card. We compare a snapshot of what the card shows
+    // and skip rendering when nothing visible changed.
+    private readonly record struct RenderKey(
+        Event? Event, string? Name, DateTime Date, string? Location, EventCategory Category,
+        int Capacity, int Registered, string? Description, bool ShowDetails, bool ShowDescription, bool AllowEdit);
+
+    private RenderKey lastRenderKey;
+    private bool needsRender = true;
+
+    protected override void OnParametersSet()
+    {
+        var key = new RenderKey(Event, Event?.Name, Event?.Date ?? default, Event?.Location, Event?.Category ?? default,
+            Event?.Capacity ?? 0, Event?.RegisteredCount ?? 0, Event?.Description, ShowDetailsLink, ShowDescription, AllowEdit);
+
+        if (key != lastRenderKey)
+        {
+            lastRenderKey = key;
+            needsRender = true;
+        }
+    }
+
+    // Always render while editing (the user is typing in this card); otherwise only when something changed.
+    protected override bool ShouldRender() => needsRender || isEditing;
+
+    protected override void OnAfterRender(bool firstRender) => needsRender = false;
+    // -------------------------------------------------------------------------------------
+
+    private bool CanSave => editContext is not null && !editContext.GetValidationMessages().Any();
+
+    private string CategoryBadgeClass =>
+        Event?.Category == EventCategory.Corporate ? "text-bg-primary" : "text-bg-success";
+
+    private void BeginEdit()
+    {
+        if (Event is null) return;
+
+        draft = Event.Clone();
+        editContext = new EditContext(draft);
+        // Parse errors (e.g. an unreadable date) never reach EventChanged/ValueChanged, so the card
+        // wouldn't re-render and Save would stay enabled. Re-render on every validation change.
+        editContext.OnValidationStateChanged += OnValidationStateChanged;
+        isEditing = true;
+        needsRender = true;
+    }
+
+    private void OnValidationStateChanged(object? sender, ValidationStateChangedEventArgs e) => StateHasChanged();
+
+    private void EndEdit()
+    {
+        if (editContext is not null)
+        {
+            editContext.OnValidationStateChanged -= OnValidationStateChanged;
+        }
+
+        draft = null;
+        editContext = null;
+        isEditing = false;
+        needsRender = true;
+    }
+
+    private void CancelEdit() => EndEdit();
+
+    private async Task SaveAsync()
+    {
+        if (draft is null || editContext is null) return;
+
+        // Trim first, then validate the trimmed values, so "  ab  " can't sneak past MinimumLength.
+        draft.Normalize();
+        if (!editContext.Validate())
+        {
+            needsRender = true;
+            return; // only valid data leaves the card
+        }
+
+        var saved = draft;
+        EndEdit();
+        await EventChanged.InvokeAsync(saved);
+    }
+}

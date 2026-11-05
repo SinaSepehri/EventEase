@@ -1,0 +1,28 @@
+﻿@page "/"
+
+<PageTitle>EventEase</PageTitle>
+
+<section class="py-4">
+    <h1 class="display-6">Welcome to EventEase</h1>
+    <p class="lead">Corporate and social events, planned without the stress.</p>
+    <a class="btn btn-primary" href="@AppRoutes.Events">Browse events</a>
+</section>
+
+@if (nextEvent is not null)
+{
+    <h2 class="h5 mt-4">Coming up next</h2>
+    <div class="row">
+        <div class="col-md-6 col-lg-4">
+            <EventCard Event="nextEvent" AllowEdit="false" />
+        </div>
+    </div>
+}
+
+@code {
+    [Inject] private EventService EventService { get; set; } = default!;
+
+    private Event? nextEvent;
+
+    protected override void OnInitialized() =>
+        nextEvent = EventService.GetAll().FirstOrDefault(e => e.Date >= DateTime.Now);
+}

@@ -1,0 +1,14 @@
+@* Accessible progress bar for an attendance percentage (0–100). *@
+<div class="d-flex align-items-center gap-2">
+    <div class="progress flex-grow-1" role="progressbar" aria-label="Attendance rate"
+         aria-valuenow="@Clamped.ToString("0", System.Globalization.CultureInfo.InvariantCulture)" aria-valuemin="0" aria-valuemax="100" style="height: 0.6rem">
+        <div class="progress-bar bg-success" style="width: @Clamped.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)%"></div>
+    </div>
+    <span class="small text-nowrap">@Clamped.ToString("0.#")%</span>
+</div>
+
+@code {
+    [Parameter] public double Rate { get; set; }
+
+    private double Clamped => Math.Clamp(Rate, 0, 100);
+}

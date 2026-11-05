@@ -1,0 +1,159 @@
+@page "/my-registrations"
+@implements IDisposable
+
+<PageTitle>My registrations · EventEase</PageTitle>
+
+<h1>My registrations</h1>
+
+@if (!Session.IsSignedIn)
+{
+    <p class="text-body-secondary">Enter your details to start a session and see your registrations.</p>
+
+    <div class="row">
+        <div class="col-md-8 col-lg-6">
+            <EditForm Model="profile" OnValidSubmit="SignInAsync" FormName="sign-in">
+                <DataAnnotationsValidator />
+
+                <div class="mb-3">
+                    <label class="form-label" for="signInName">Full name</label>
+                    <InputText id="signInName" class="form-control" autocomplete="name" @bind-Value="profile.FullName" />
+                    <ValidationMessage For="() => profile.FullName" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="signInEmail">Email</label>
+                    <InputText id="signInEmail" type="email" class="form-control" autocomplete="email" @bind-Value="profile.Email" />
+                    <ValidationMessage For="() => profile.Email" />
+                </div>
+                <div class="form-check mb-3">
+                    <InputCheckbox id="signInRemember" class="form-check-input" @bind-Value="profile.RememberMe" />
+                    <label class="form-check-label" for="signInRemember">Keep me signed in on this device</label>
+                </div>
+                <button type="submit" class="btn btn-primary">Continue</button>
+            </EditForm>
+        </div>
+    </div>
+}
+else
+{
+    <div class="card mb-4">
+        <div class="card-body d-flex flex-wrap gap-3 align-items-center">
+            <div>
+                <div class="fw-semibold">@Session.FullName</div>
+                <div class="small text-body-secondary">@Session.Email</div>
+                <div class="small text-body-secondary">
+                    @if (Session.IsPersistent)
+                    {
+                        <span>Signed in on this device until @Session.ExpiresAt?.ToLocalTime().ToString("MMM d, yyyy")</span>
+                    }
+                    else
+                    {
+                        <span>Signed in until you close this tab</span>
+                    }
+                </div>
+            </div>
+            <button class="btn btn-outline-secondary btn-sm ms-auto" @onclick="SignOutAsync">Sign out</button>
+        </div>
+    </div>
+
+    @if (records.Count == 0)
+    {
+        <p>You have no registrations yet. <a href="@AppRoutes.Events">Browse events</a> to find one.</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th scope="col">Event</th>
+                        <th scope="col">Tickets</th>
+                        <th scope="col">Registered</th>
+                        <th scope="col">Status</th>
+                        <th scope="col"><span class="visually-hidden">Actions</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in records)
+                    {
+                        <tr @key="r.Id">
+                            <td>
+                                @if (EventService.GetById(r.EventId) is not null)
+                                {
+                                    <a href="@AppRoutes.EventDetails(r.EventId)">@r.EventName</a>
+                                }
+                                else
+                                {
+                                    <span>@r.EventName <span class="small text-body-secondary">(no longer listed)</span></span>
+                                }
+                            </td>
+                            <td>@r.Tickets</td>
+                            <td>@r.RegisteredAt.ToLocalTime().ToString("MMM d, yyyy h:mm tt")</td>
+                            <td><StatusBadge Record="r" /></td>
+                            <td class="text-end">
+                                @if (!r.IsCancelled && !r.IsCheckedIn)
+                                {
+                                    @if (confirmCancelId == r.Id)
+                                    {
+                                        <span class="small me-2">Cancel this registration?</span>
+                                        <button class="btn btn-danger btn-sm me-1" @onclick="() => CancelAsync(r.Id)">Yes, cancel</button>
+                                        <button class="btn btn-outline-secondary btn-sm" @onclick="() => confirmCancelId = null">Keep</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmCancelId = r.Id">Cancel</button>
+                                    }
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [Inject] private UserSessionState Session { get; set; } = default!;
+    [Inject] private AttendanceService Attendance { get; set; } = default!;
+    [Inject] private EventService EventService { get; set; } = default!;
+
+    private UserProfile profile = new();
+    private IReadOnlyList<RegistrationRecord> records = [];
+    private Guid? confirmCancelId;
+
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnStateChanged;
+        Attendance.Changed += OnStateChanged;
+        Load();
+    }
+
+    private void Load() => records = Attendance.GetForEmail(Session.Email);
+
+    private void OnStateChanged() => InvokeAsync(() =>
+    {
+        Load();
+        StateHasChanged();
+    });
+
+    private async Task SignInAsync()
+    {
+        profile.Normalize();
+        await Session.SignInAsync(profile.FullName, profile.Email, profile.RememberMe);
+        profile = new UserProfile();
+    }
+
+    private Task SignOutAsync() => Session.SignOutAsync();
+
+    private async Task CancelAsync(Guid id)
+    {
+        confirmCancelId = null;
+        await Attendance.CancelAsync(id);
+    }
+
+    public void Dispose()
+    {
+        Session.Changed -= OnStateChanged;
+        Attendance.Changed -= OnStateChanged;
+    }
+}

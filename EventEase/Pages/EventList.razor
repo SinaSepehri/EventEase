@@ -1,0 +1,141 @@
+@page "/events"
+@implements IDisposable
+
+<PageTitle>Events · EventEase</PageTitle>
+
+<h1>Upcoming events</h1>
+
+<div class="row g-2 align-items-center mb-3">
+    <div class="col-sm-6 col-lg-4">
+        <label class="visually-hidden" for="search">Search events</label>
+        @* Two-way bound on every keystroke, but the (expensive) filtering is debounced *@
+        <input id="search" type="search" class="form-control" placeholder="Search by name or location…"
+               maxlength="100" autocomplete="off"
+               @bind="searchText" @bind:event="oninput" @bind:after="OnSearchChangedAsync" />
+    </div>
+    <div class="col-auto">
+        <select class="form-select" aria-label="Filter by category"
+                @bind="categoryFilter" @bind:after="ApplyFilter">
+            <option value="">All categories</option>
+            @foreach (var category in Enum.GetValues<EventCategory>())
+            {
+                <option value="@category">@category</option>
+            }
+        </select>
+    </div>
+    <div class="col-auto text-body-secondary small" aria-live="polite">
+        Showing @filteredCount.ToString("N0") of @events.Count.ToString("N0")
+    </div>
+</div>
+
+@if (filteredCount == 0)
+{
+    <p class="text-body-secondary">No events match your search.</p>
+}
+else
+{
+    @* Virtualize renders only the rows in (and just around) the viewport.
+       With 5,000 events that's ~10 rows instead of 5,000 cards in the DOM. *@
+    <Virtualize Items="rows" Context="row" ItemSize="240" OverscanCount="3">
+        <div class="row row-cols-1 row-cols-lg-3 g-3 pb-3">
+            @foreach (var index in row)
+            {
+                <div class="col" @key="events[index].Id">
+                    @* Bind by index so the saved Event replaces the list entry (two-way binding) *@
+                    <EventCard @bind-Event="events[index]"
+                               @bind-Event:after="() => Persist(index)" />
+                </div>
+            }
+        </div>
+    </Virtualize>
+}
+
+@code {
+    private const int ColumnsPerRow = 3;
+    private const int SearchDebounceMs = 250;
+
+    [Inject] private EventService EventService { get; set; } = default!;
+    [Inject] private AppOptions Options { get; set; } = default!;
+
+    // Optional (Development only): /events?count=5000 generates mock events for performance testing.
+    // Read as a string so an invalid value like ?count=abc is ignored instead of throwing.
+    [SupplyParameterFromQuery(Name = "count")] public string? CountQuery { get; set; }
+
+    private List<Event> events = [];
+    private List<int[]> rows = [];   // filtered indexes, grouped into rows of 3 for the grid
+    private int filteredCount;
+    private string searchText = string.Empty;
+    private string categoryFilter = string.Empty;
+    private CancellationTokenSource? debounceCts;
+
+    protected override void OnInitialized()
+    {
+        if (Options.EnableMockDataGenerator && int.TryParse(CountQuery, out var count) && count > 0)
+        {
+            EventService.EnsureCount(count);
+        }
+
+        events = EventService.GetAll().ToList();
+        ApplyFilter();
+    }
+
+    private async Task OnSearchChangedAsync()
+    {
+        // Debounce: wait until the user pauses typing before filtering,
+        // instead of filtering and re-rendering on every single keystroke.
+        debounceCts?.Cancel();
+        debounceCts?.Dispose();
+        debounceCts = new CancellationTokenSource();
+        var token = debounceCts.Token;
+
+        try
+        {
+            await Task.Delay(SearchDebounceMs, token);
+        }
+        catch (TaskCanceledException)
+        {
+            return; // a newer keystroke superseded this one
+        }
+
+        ApplyFilter();
+    }
+
+    /// <summary>
+    /// Filters once and caches the result. Previously the filter was a computed property
+    /// that re-ran the whole LINQ query 3 times on every render.
+    /// </summary>
+    private void ApplyFilter()
+    {
+        var term = searchText.Trim();
+        var hasCategory = Enum.TryParse<EventCategory>(categoryFilter, out var category);
+
+        var matches = new List<int>(events.Count);
+        for (var i = 0; i < events.Count; i++)
+        {
+            var e = events[i];
+            if (hasCategory && e.Category != category) continue;
+            if (term.Length > 0
+                && !e.Name.Contains(term, StringComparison.OrdinalIgnoreCase)
+                && !e.Location.Contains(term, StringComparison.OrdinalIgnoreCase)) continue;
+            matches.Add(i);
+        }
+
+        filteredCount = matches.Count;
+        rows = matches.Chunk(ColumnsPerRow).ToList();
+    }
+
+    private void Persist(int index)
+    {
+        // If the service rejects the change, restore the stored version.
+        if (!EventService.Update(events[index]))
+        {
+            events[index] = EventService.GetById(events[index].Id) ?? events[index];
+        }
+    }
+
+    public void Dispose()
+    {
+        debounceCts?.Cancel();
+        debounceCts?.Dispose();
+    }
+}

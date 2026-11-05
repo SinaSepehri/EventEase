@@ -1,0 +1,177 @@
+@page "/attendance/{EventId:int}"
+@implements IDisposable
+
+<PageTitle>Attendance · @(evtName) · EventEase</PageTitle>
+
+@if (summary is not null)
+{
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="@AppRoutes.Attendance">Attendance</a></li>
+            <li class="breadcrumb-item active" aria-current="page">@evtName</li>
+        </ol>
+    </nav>
+
+    <h1>@evtName</h1>
+    @if (evt is not null)
+    {
+        <p class="text-body-secondary">
+            @evt.Date.ToString("dddd, MMMM d, yyyy · h:mm tt") · @evt.Location ·
+            <a href="@AppRoutes.EventDetails(evt.Id)">Event details</a>
+        </p>
+    }
+
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3"><StatTile Label="Registrations" Value="@summary.Registrations.ToString("N0")" /></div>
+        <div class="col-6 col-md-3"><StatTile Label="Tickets" Value="@summary.Tickets.ToString("N0")" /></div>
+        <div class="col-6 col-md-3"><StatTile Label="Checked in (tickets)" Value="@summary.CheckedInTickets.ToString("N0")" /></div>
+        <div class="col-6 col-md-3"><StatTile Label="Cancelled" Value="@summary.Cancelled.ToString("N0")" /></div>
+    </div>
+    <div class="mb-4" style="max-width: 32rem">
+        <AttendanceBar Rate="summary.AttendanceRate" />
+    </div>
+
+    <div class="row g-2 align-items-center mb-3">
+        <div class="col-sm-6 col-lg-4">
+            <label class="visually-hidden" for="attendeeSearch">Search attendees</label>
+            <input id="attendeeSearch" type="search" class="form-control" placeholder="Search name or email…"
+                   maxlength="100" autocomplete="off"
+                   @bind="search" @bind:event="oninput" @bind:after="ApplyFilter" />
+        </div>
+        <div class="col-auto">
+            <select class="form-select" aria-label="Filter by status" @bind="statusFilter" @bind:after="ApplyFilter">
+                <option value="all">All</option>
+                <option value="waiting">Not checked in</option>
+                <option value="checked-in">Checked in</option>
+                <option value="cancelled">Cancelled</option>
+            </select>
+        </div>
+        <div class="col-auto small text-body-secondary" aria-live="polite">@visible.Count of @all.Count</div>
+    </div>
+
+    @if (all.Count == 0)
+    {
+        <p>No one has registered for this event yet.</p>
+    }
+    else if (visible.Count == 0)
+    {
+        <p class="text-body-secondary">No attendees match the filter.</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th scope="col">Name</th>
+                        <th scope="col">Email</th>
+                        <th scope="col" class="text-end">Tickets</th>
+                        <th scope="col">Status</th>
+                        <th scope="col"><span class="visually-hidden">Actions</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @* Virtualize keeps the table fast even with thousands of attendees *@
+                    <Virtualize Items="visible" Context="r" ItemSize="49" SpacerElement="tr">
+                        <tr @key="r.Id">
+                            <td>@r.FullName</td>
+                            <td class="text-break">@r.Email</td>
+                            <td class="text-end">@r.Tickets</td>
+                            <td><StatusBadge Record="r" /></td>
+                            <td class="text-end text-nowrap">
+                                @if (r.IsCancelled)
+                                {
+                                    <span class="small text-body-secondary">—</span>
+                                }
+                                else if (r.IsCheckedIn)
+                                {
+                                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => UndoAsync(r.Id)"
+                                            aria-label="@($"Undo check-in for {r.FullName}")">Undo</button>
+                                }
+                                else
+                                {
+                                    <button class="btn btn-success btn-sm" @onclick="() => CheckInAsync(r.Id)"
+                                            aria-label="@($"Check in {r.FullName}")">Check in</button>
+                                }
+                            </td>
+                        </tr>
+                    </Virtualize>
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public int EventId { get; set; }
+
+    [Inject] private AttendanceService AttendanceService { get; set; } = default!;
+    [Inject] private EventService EventService { get; set; } = default!;
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
+
+    private Event? evt;
+    private string evtName = string.Empty;
+    private AttendanceSummary? summary;
+    private IReadOnlyList<RegistrationRecord> all = [];
+    private List<RegistrationRecord> visible = [];
+    private string search = string.Empty;
+    private string statusFilter = "all";
+
+    protected override void OnInitialized() => AttendanceService.Changed += OnChanged;
+
+    protected override void OnParametersSet()
+    {
+        evt = EventService.GetById(EventId);
+        all = AttendanceService.GetForEvent(EventId);
+
+        // Unknown event with no stored registrations -> real "not found".
+        if (evt is null && all.Count == 0)
+        {
+            summary = null;
+            Navigation.NotFound();
+            return;
+        }
+
+        Load();
+    }
+
+    private void Load()
+    {
+        all = AttendanceService.GetForEvent(EventId);
+        summary = AttendanceService.GetSummary(EventId);
+        evtName = summary.EventName;
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        var term = search.Trim();
+        visible = all
+            .Where(r => statusFilter switch
+            {
+                "waiting" => !r.IsCancelled && !r.IsCheckedIn,
+                "checked-in" => r.IsCheckedIn,
+                "cancelled" => r.IsCancelled,
+                _ => true
+            })
+            .Where(r => term.Length == 0
+                        || r.FullName.Contains(term, StringComparison.OrdinalIgnoreCase)
+                        || r.Email.Contains(term, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(r => r.IsCancelled)
+            .ThenBy(r => r.FullName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private Task CheckInAsync(Guid id) => AttendanceService.CheckInAsync(id);
+
+    private Task UndoAsync(Guid id) => AttendanceService.UndoCheckInAsync(id);
+
+    private void OnChanged() => InvokeAsync(() =>
+    {
+        if (summary is null) return;
+        Load();
+        StateHasChanged();
+    });
+
+    public void Dispose() => AttendanceService.Changed -= OnChanged;
+}

@@ -1,0 +1,46 @@
+﻿<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="@AppRoutes.Home">EventEase</a>
+        <button title="Navigation menu" class="navbar-toggler" @onclick="ToggleNavMenu">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+    </div>
+</div>
+
+<div class="@NavMenuCssClass nav-scrollable" @onclick="ToggleNavMenu">
+    <nav class="nav flex-column">
+        <div class="nav-item px-3">
+            @* Match.All: Home is only active on the exact root URL *@
+            <NavLink class="nav-link" href="@AppRoutes.Home" Match="NavLinkMatch.All">
+                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
+            </NavLink>
+        </div>
+        <div class="nav-item px-3">
+            @* Match.Prefix keeps "Events" highlighted on details and registration pages *@
+            <NavLink class="nav-link" href="@AppRoutes.Events" Match="NavLinkMatch.Prefix">
+                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Events
+            </NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="@AppRoutes.MyRegistrations" Match="NavLinkMatch.All">
+                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> My registrations
+            </NavLink>
+        </div>
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="@AppRoutes.Attendance" Match="NavLinkMatch.Prefix">
+                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Attendance
+            </NavLink>
+        </div>
+    </nav>
+</div>
+
+@code {
+    private bool collapseNavMenu = true;
+
+    private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
+
+    private void ToggleNavMenu()
+    {
+        collapseNavMenu = !collapseNavMenu;
+    }
+}

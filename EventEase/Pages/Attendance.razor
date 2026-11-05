@@ -1,0 +1,79 @@
+@page "/attendance"
+@implements IDisposable
+
+<PageTitle>Attendance · EventEase</PageTitle>
+
+<h1>Attendance tracker</h1>
+<p class="text-body-secondary">Check in attendees and follow participation for each event.</p>
+
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3"><StatTile Label="Events with registrations" Value="@summaries.Count.ToString("N0")" /></div>
+    <div class="col-6 col-md-3"><StatTile Label="Tickets registered" Value="@totalTickets.ToString("N0")" /></div>
+    <div class="col-6 col-md-3"><StatTile Label="Tickets checked in" Value="@totalCheckedIn.ToString("N0")" /></div>
+    <div class="col-6 col-md-3"><StatTile Label="Overall attendance" Value="@($"{OverallRate:0.#}%")" /></div>
+</div>
+
+@if (summaries.Count == 0)
+{
+    <p>No registrations yet. Once people register for events, they appear here for check-in.</p>
+    <a class="btn btn-primary" href="@AppRoutes.Events">Browse events</a>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th scope="col">Event</th>
+                    <th scope="col" class="text-end">Registrations</th>
+                    <th scope="col" class="text-end">Tickets</th>
+                    <th scope="col" class="text-end">Checked in</th>
+                    <th scope="col" style="min-width: 10rem">Attendance</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var s in summaries)
+                {
+                    <tr @key="s.EventId">
+                        <td><a href="@AppRoutes.EventAttendance(s.EventId)">@s.EventName</a></td>
+                        <td class="text-end">@s.Registrations</td>
+                        <td class="text-end">@s.Tickets</td>
+                        <td class="text-end">@s.CheckedInTickets</td>
+                        <td><AttendanceBar Rate="s.AttendanceRate" /></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Inject] private AttendanceService AttendanceService { get; set; } = default!;
+
+    private IReadOnlyList<AttendanceSummary> summaries = [];
+    private int totalTickets;
+    private int totalCheckedIn;
+
+    private double OverallRate => totalTickets == 0 ? 0 : 100.0 * totalCheckedIn / totalTickets;
+
+    protected override void OnInitialized()
+    {
+        AttendanceService.Changed += OnChanged;
+        Load();
+    }
+
+    private void Load()
+    {
+        summaries = AttendanceService.GetSummaries();
+        totalTickets = summaries.Sum(s => s.Tickets);
+        totalCheckedIn = summaries.Sum(s => s.CheckedInTickets);
+    }
+
+    private void OnChanged() => InvokeAsync(() =>
+    {
+        Load();
+        StateHasChanged();
+    });
+
+    public void Dispose() => AttendanceService.Changed -= OnChanged;
+}

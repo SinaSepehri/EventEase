@@ -1,0 +1,26 @@
+@* Shows who is signed in. Updates live when the session changes (state management). *@
+@implements IDisposable
+
+@if (Session.IsSignedIn)
+{
+    <span class="small text-body-secondary me-2">
+        Signed in as <a href="@AppRoutes.MyRegistrations" class="fw-semibold">@Session.FullName</a>
+    </span>
+    <button type="button" class="btn btn-link btn-sm p-0" @onclick="SignOutAsync">Sign out</button>
+}
+else
+{
+    <a href="@AppRoutes.MyRegistrations" class="small">Sign in</a>
+}
+
+@code {
+    [Inject] private UserSessionState Session { get; set; } = default!;
+
+    protected override void OnInitialized() => Session.Changed += OnChanged;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    private Task SignOutAsync() => Session.SignOutAsync();
+
+    public void Dispose() => Session.Changed -= OnChanged;
+}

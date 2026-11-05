@@ -1,0 +1,80 @@
+@page "/events/{Id:int}"
+
+<PageTitle>@(evt?.Name ?? "Event") · EventEase</PageTitle>
+
+@if (evt is not null)
+{
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="@AppRoutes.Events">Events</a></li>
+            <li class="breadcrumb-item active" aria-current="page">@evt.Name</li>
+        </ol>
+    </nav>
+
+    @* The heading reads the same bound value as the card, so saving edits
+       in the card updates it immediately (two-way binding). *@
+    <h1>@evt.Name</h1>
+
+    @if (evt.IsPast)
+    {
+        <div class="alert alert-secondary">This event has already taken place.</div>
+    }
+
+    @if (myRegistration is not null)
+    {
+        <div class="alert alert-success py-2" role="status">
+            You're registered with @myRegistration.Tickets ticket(s).
+            <a href="@AppRoutes.MyRegistrations" class="alert-link">Manage my registrations</a>
+        </div>
+    }
+
+    <div class="row">
+        <div class="col-lg-6">
+            <EventCard @bind-Event="evt"
+                       @bind-Event:after="Persist"
+                       ShowDetailsLink="false"
+                       ShowDescription="true" />
+        </div>
+    </div>
+
+    <div class="mt-3 d-flex gap-3">
+        <a class="btn btn-link ps-0" href="@AppRoutes.Events">&larr; Back to all events</a>
+        <a class="btn btn-link" href="@AppRoutes.EventAttendance(evt.Id)">Attendance tracker</a>
+    </div>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    [Inject] private EventService EventService { get; set; } = default!;
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
+    [Inject] private AttendanceService Attendance { get; set; } = default!;
+    [Inject] private UserSessionState Session { get; set; } = default!;
+
+    private Event? evt;
+    private RegistrationRecord? myRegistration;
+
+    // OnParametersSet (not OnInitialized) so navigating between /events/1 and
+    // /events/2 reuses the component but still loads the right event.
+    protected override void OnParametersSet()
+    {
+        evt = EventService.GetById(Id);
+        if (evt is null)
+        {
+            // Unknown id (e.g. /events/0 or /events/99): show the shared Not Found page.
+            Navigation.NotFound();
+            return;
+        }
+
+        myRegistration = Session.IsSignedIn ? Attendance.FindActive(Id, Session.Email) : null;
+    }
+
+    private void Persist()
+    {
+        // If the service rejects the change, reload the stored copy so the UI never shows unsaved data.
+        if (evt is not null && !EventService.Update(evt))
+        {
+            evt = EventService.GetById(Id);
+        }
+    }
+}

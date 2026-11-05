@@ -1,0 +1,59 @@
+﻿@inherits LayoutComponentBase
+@implements IDisposable
+
+<div class="page">
+    <div class="sidebar">
+        <NavMenu />
+    </div>
+
+    <main>
+        <div class="top-row px-4">
+            <SessionStatus />
+        </div>
+
+        <article class="content px-4">
+            @* An ErrorBoundary keeps one broken page from taking down the whole app
+               (before, any exception showed the "An unhandled error has occurred" bar and
+               the user had to reload). It resets when the user navigates elsewhere. *@
+            <ErrorBoundary @ref="errorBoundary">
+                <ChildContent>
+                    @Body
+                </ChildContent>
+                <ErrorContent Context="exception">
+                    @{ LogError(exception); }
+                    <div class="alert alert-danger" role="alert">
+                        <h1 class="h4">Something went wrong</h1>
+                        <p>This page hit an unexpected error. You can try again or go back to the event list.</p>
+                        <button class="btn btn-outline-danger btn-sm me-2" @onclick="Recover">Try again</button>
+                        <a class="btn btn-link btn-sm" href="@AppRoutes.Events">Back to events</a>
+                    </div>
+                </ErrorContent>
+            </ErrorBoundary>
+        </article>
+    </main>
+</div>
+
+@code {
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
+    [Inject] private ILogger<MainLayout> Logger { get; set; } = default!;
+
+    private ErrorBoundary? errorBoundary;
+
+    protected override void OnInitialized() => Navigation.LocationChanged += OnLocationChanged;
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e) => errorBoundary?.Recover();
+
+    private void Recover() => errorBoundary?.Recover();
+
+    private Exception? lastLogged;
+
+    // Log each caught exception once (ErrorContent can render more than once for the same error).
+    private void LogError(Exception exception)
+    {
+        if (ReferenceEquals(exception, lastLogged)) return;
+        lastLogged = exception;
+        Logger.LogError(exception, "Unhandled error caught by ErrorBoundary.");
+    }
+
+    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
+}
